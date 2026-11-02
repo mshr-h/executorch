@@ -31,6 +31,61 @@ class OpDivOutTest : public OperatorTest {
     return torch::executor::aten::div_outf(context_, a, b, out);
   }
 
+  template <typename CTYPE, ScalarType DTYPE>
+  void test_complex_scalar_broadcast() {
+    TensorFactory<DTYPE> tf;
+    Tensor a =
+        tf.make({2, 2}, {CTYPE(1, 1), CTYPE(2, -2), CTYPE(4, 4), CTYPE(8, -8)});
+    Tensor right_expected = tf.make(
+        {2, 2}, {CTYPE(0.5, 0), CTYPE(0, -1), CTYPE(2, 0), CTYPE(0, -4)});
+    Tensor left_expected = tf.make(
+        {2, 2}, {CTYPE(2, 0), CTYPE(0, 1), CTYPE(0.5, 0), CTYPE(0, 0.25)});
+    const std::vector<std::vector<int32_t>> scalar_sizes = {{}, {1}, {1, 1}};
+    for (const auto& sizes : scalar_sizes) {
+      Tensor b = tf.make(sizes, {CTYPE(2, 2)});
+      Tensor out = tf.full({2, 2}, CTYPE(0, 0));
+      EXPECT_TENSOR_CLOSE(op_div_out(a, b, out), right_expected);
+      EXPECT_TENSOR_CLOSE(op_div_out(b, a, out), left_expected);
+    }
+
+    Tensor scalar_a = tf.make({}, {CTYPE(1, 1)});
+    Tensor scalar_b = tf.make({}, {CTYPE(2, 2)});
+    Tensor out = tf.full({}, CTYPE(0, 0));
+    EXPECT_TENSOR_CLOSE(
+        op_div_out(scalar_a, scalar_b, out), tf.make({}, {CTYPE(0.5, 0)}));
+  }
+
+  template <typename CTYPE, ScalarType DTYPE>
+  void test_complex_broadcast() {
+    TensorFactory<DTYPE> tf;
+    Tensor a = tf.make({2, 1}, {CTYPE(2, 2), CTYPE(4, -4)});
+    Tensor b = tf.make({1, 2}, {CTYPE(1, 1), CTYPE(2, -2)});
+    Tensor out = tf.full({2, 2}, CTYPE(0, 0));
+    EXPECT_TENSOR_CLOSE(
+        op_div_out(a, b, out),
+        tf.make({2, 2}, {CTYPE(2, 0), CTYPE(0, 1), CTYPE(0, -4), CTYPE(2, 0)}));
+
+    Tensor empty_a = tf.full({0, 2}, CTYPE(0, 0));
+    Tensor empty_out = tf.full({0, 2}, CTYPE(0, 0));
+    EXPECT_TENSOR_CLOSE(op_div_out(empty_a, b, empty_out), empty_a);
+  }
+
+  template <ScalarType DTYPE_A, ScalarType DTYPE_B, ScalarType DTYPE_OUT>
+  void test_mismatched_complex_dtypes_dies() {
+    ET_SKIP_IF(
+        torch::executor::testing::SupportedFeatures::get()->is_aten,
+        "ATen supports mixed complex dtypes");
+    TensorFactory<DTYPE_A> tf_a;
+    TensorFactory<DTYPE_B> tf_b;
+    TensorFactory<DTYPE_OUT> tf_out;
+
+    Tensor a = tf_a.ones({2});
+    Tensor b = tf_b.ones({2});
+    Tensor out = tf_out.zeros({2});
+
+    ET_EXPECT_KERNEL_FAILURE(context_, op_div_out(a, b, out));
+  }
+
   template <ScalarType DTYPE_A, ScalarType DTYPE_B, ScalarType DTYPE_OUT>
   void test_div() {
     TensorFactory<DTYPE_A> tf_a;
@@ -606,6 +661,48 @@ TEST_F(OpDivScalarOutTest, OptimizedSanityCheck) {
 //
 // Complex Type Tests
 //
+
+TEST_F(OpDivOutTest, ComplexScalarBroadcast) {
+#define TEST_ENTRY(ctype, dtype) \
+  test_complex_scalar_broadcast<ctype, ScalarType::dtype>();
+  ET_FORALL_COMPLEX_TYPES(TEST_ENTRY);
+#undef TEST_ENTRY
+}
+
+TEST_F(OpDivOutTest, ComplexBroadcast) {
+#define TEST_ENTRY(ctype, dtype) \
+  test_complex_broadcast<ctype, ScalarType::dtype>();
+  ET_FORALL_COMPLEX_TYPES(TEST_ENTRY);
+#undef TEST_ENTRY
+}
+
+TEST_F(OpDivOutTest, ComplexMismatchedInputDtypesDies) {
+  test_mismatched_complex_dtypes_dies<
+      ScalarType::ComplexFloat,
+      ScalarType::ComplexDouble,
+      ScalarType::ComplexDouble>();
+}
+
+TEST_F(OpDivOutTest, ComplexMismatchedOutputDtypeDies) {
+  test_mismatched_complex_dtypes_dies<
+      ScalarType::ComplexFloat,
+      ScalarType::ComplexFloat,
+      ScalarType::ComplexDouble>();
+}
+
+TEST_F(OpDivOutTest, ComplexAndRealInputsDies) {
+  test_mismatched_complex_dtypes_dies<
+      ScalarType::ComplexFloat,
+      ScalarType::Float,
+      ScalarType::ComplexFloat>();
+}
+
+TEST_F(OpDivOutTest, RealAndComplexInputsDies) {
+  test_mismatched_complex_dtypes_dies<
+      ScalarType::Float,
+      ScalarType::ComplexFloat,
+      ScalarType::ComplexFloat>();
+}
 
 TEST_F(OpDivOutTest, ComplexFloatBasic) {
   TensorFactory<ScalarType::ComplexFloat> tf;
